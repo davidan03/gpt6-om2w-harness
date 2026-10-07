@@ -14,26 +14,22 @@ The harness behind our GPT-6 result on the 300 Online-Mind2Web tasks: **152/300 
 - **History.** Kept on the server via `previous_response_id`, so the model sees every earlier screenshot.
 - **Steps and aborts.** A turn that only requests a screenshot is a handshake, not a step. More than 3 in a row aborts the task.
 - **Run limits.** 30 steps per task, 4 tasks in parallel, a 9,000 s task timeout, and the step hang guard on.
+- **Judge.** Only tasks that end with `done` are judged; all others score 0. GPT-4.1 sees the task, the `done` answer and the last 3 screenshots, and replies SUCCESS or NOT SUCCESS (`reward_browser.py`).
 
 ## Setup
 
-You need Linux, Python 3.12 and an OpenAI key with access to `gpt-6-astra` and `gpt-4.1`.
+You need Linux, Python 3.12 and an OpenAI key with access to `gpt-6-astra` and `gpt-4.1`. No GPU.
 
-1. Clone OpenWebRL at the commit we used:
-   ```bash
-   git clone https://github.com/OpenWebRL/OpenWebRL && git -C OpenWebRL checkout 05f8ed4
-   ```
-   This harness takes only its `slime` package. The `slime` files it uses match that commit byte for byte. Its `openwebrl/` copy is shadowed by the one here.
-2. Install OpenWebRL's Python environment as its README describes. Then run `playwright install chromium`.
-
-   Our runs used torch 2.9.1, transformers 4.57.1, sglang 0.5.6.post2, openai 2.6.1 and playwright 1.58.0. No GPU is needed: torch and sglang are imported but never run.
+```bash
+python3.12 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/playwright install chromium
+```
 
 ## Run
 
 ```bash
 export OPENAI_API_KEY=...
-export OPENWEBRL_UPSTREAM=/path/to/OpenWebRL
-export PYTHON=/path/to/env/bin/python
+export PYTHON=$PWD/.venv/bin/python   # run from the repo root
 scripts/run_om2w.sh outputs/smoke --task-indices 0,1,2   # 3 tasks
 scripts/run_om2w.sh outputs/run1                         # all 300
 ```
@@ -71,8 +67,7 @@ Change one thing at a time, and rerun this baseline on the same day: some start 
 |---|---|
 | `astra_eval.py` | agent loop |
 | `native_actions.py` | runs the `computer` actions in the env server |
-| `openwebrl/` | OpenWebRL eval code as it ran (05f8ed4 plus our harness fixes); files this harness never loads are removed |
-| `browser_runtime/` | the env server's view of `openwebrl/`; a light `__init__.py` keeps it from importing the ML stack |
+| `openwebrl/` | the parts of OpenWebRL's evaluator this harness runs (from 05f8ed4 plus our harness fixes): task loading, browser env server, judge, scorer |
 | `scripts/` | launcher, and the env-server wrapper that installs the native actions |
 | `reference/` | per-task outcomes of our run |
 
