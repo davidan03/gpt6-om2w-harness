@@ -1,0 +1,11 @@
+# Versions of our 2026-09-09 run (Python 3.12). Then: playwright install chromium
+openai==2.6.1
+playwright==1.58.0
+fastapi==0.138.1
+uvicorn==0.49.0
+pydantic==2.13.4
+aiohttp==3.14.1
+pillow==12.2.0
+pyyaml==6.0.3
+loguru==0.7.3
+tqdm==4.68.3

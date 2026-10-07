@@ -1,8 +1,7 @@
 """
 Local subprocess-backed browser environment client.
 
-This is a lightweight alternative to the K8s sandbox path.  Each browser
-environment gets its own local env_server subprocess and process group, so
+Each browser environment gets its own local env_server subprocess and process group, so
 cleanup can forcibly terminate the env_server and its Chromium children.
 """
 
@@ -21,14 +20,11 @@ from typing import Any, Dict, List, Optional, Tuple
 import aiohttp
 import subprocess
 
-# Hang diagnostics (active only with SLIME_BROWSER_STEP_HANG_GUARD=1): if a /step is still
-# outstanding after this many seconds, py-spy-dump the env_server's stack next to its log
-# BEFORE the request timeout kills it, so every hang leaves a stack trace instead of a bare
-# asyncio.TimeoutError. See openwebrl/env/web_env.py (step hang guard).
-_HANG_DUMP_SECS = (
-    float(os.environ.get("SLIME_BROWSER_HANG_GUARD_DUMP_SECS", "120"))
-    if os.environ.get("SLIME_BROWSER_STEP_HANG_GUARD", "0") == "1" else 0.0
-)
+# Hang diagnostics: if a /step is still outstanding after this many seconds, py-spy-dump
+# the env_server's stack next to its log BEFORE the request timeout kills it, so every hang
+# leaves a stack trace instead of a bare asyncio.TimeoutError. See openwebrl/env/web_env.py
+# (step hang guard).
+_HANG_DUMP_SECS = float(os.environ.get("SLIME_BROWSER_HANG_GUARD_DUMP_SECS", "120"))
 
 logger = logging.getLogger(__name__)
 
@@ -316,10 +312,6 @@ class LocalProcessWebEnv:
         self._task_data: Optional[dict] = None
         self._closed = False
         self._broken = False
-
-    async def setup(self) -> None:
-        """No-op -- env_server is started by create_local_process_env()."""
-        pass
 
     async def initialize(
         self,

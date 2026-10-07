@@ -1,21 +1,18 @@
 """
-Evaluate browser agent success rate on WebVoyager validation set.
+Evaluate browser agent success rate on a browser-env style JSONL task file.
 
-Runs generate_trajectory_sample for each task, then uses the LLM judge
+Runs generate_turn_sample for each task, then uses the LLM judge
 to determine success. Supports parallel evaluation with a bounded number
 of concurrent environments.
 
-Usage:
-    python evaluate.py --data openwebrl/data/webvoyager_val.parquet \
-                       --n-parallel 4 \
-                       --sglang-ip localhost --sglang-port 30000
+astra_eval.py installs its generator as ``generate_turn_sample`` and then
+calls ``main()``; see scripts/run_om2w.sh for the flags it is run with.
 """
 
 import argparse
 import asyncio
 import json
 import os
-import re
 import sys
 import datetime
 from dataclasses import dataclass
@@ -27,12 +24,9 @@ if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
 import logging
-import pandas as pd
 
-from openwebrl.generate_browser import generate_trajectory_sample, generate_turn_sample
 from openwebrl.reward_browser import reward_func
-from slime.utils.types import Sample
-from slime.utils.http_utils import init_http_client
+from openwebrl.sample import Sample
 
 try:
     from tqdm.auto import tqdm
@@ -45,42 +39,21 @@ logging.getLogger("httpx").setLevel(logging.WARNING)
 
 @dataclass
 class EvalArgs:
-    """Arguments for evaluation (mirrors MockRolloutArgs from test_generate_browser.py)."""
-    sglang_router_ip: str = "localhost"
-    sglang_router_port: int = 30000
-    partial_rollout: bool = False
-    hf_checkpoint: str = ""
-    sglang_server_concurrency: int = 64
-    rollout_num_gpus: int = 1
-    rollout_num_gpus_per_engine: int = 1
-    rollout_temperature: float = 0.0
-    no_repeat_resample: int = 0
-    final_answer_at_step: int = 0
-    ineffective_hint: int = 0
-    rollout_top_p: float = 1.0
-    rollout_top_k: int = -1
-    rollout_max_response_len: int = 8192
-    rollout_stop: list = None
-    rollout_stop_token_ids: list = None
-    rollout_skip_special_tokens: bool = False
-    use_distributed_post: bool = False
-    sglang_dp_size: int = 1
-    rollout_max_context_len: int = 32768
-    max_consecutive_parse_failures: int = 3
+    """Arguments for evaluation, read by the generator and by reward_browser."""
     max_steps: int = 16
     context_num_screenshots: int = 3
     path_to_save_generated_samples: str = ""
-    inference_step_timeout_secs: float = 60.0
     task_timeout_secs: float = 900.0
     # reward config
     judge_max_attached_imgs: int = 3
     judge_timeout_secs: float = 120.0
     judge_api_model: str = "gpt-4.1" # o4-mini
-    judge_api_mode: str = "token"
-    judge_prompt_variant: str = "default"
-    turn_history_reasoning_mode: str = "full"
-    browser_response_format_mode: str = "slime"
-    browser_include_tool_response: int = 1
+    browser_response_format_mode: str = "browser_env"
+
+
+async def generate_turn_sample(args, sample, sampling_params):
+    """Turn-level generator; astra_eval.py replaces this module global before calling main()."""
+    raise NotImplementedError("No generator installed: run through astra_eval.py.")
 
 
 def _serialize_exception(exc: BaseException) -> dict[str, str]:
@@ -133,36 +106,6 @@ def _is_summary_eligible(result: dict[str, Any]) -> bool:
     return bool(status) and status != str(Sample.Status.PENDING)
 
 
-def _short_checkpoint_tag(hf_checkpoint: str, max_len: int = 80) -> str:
-    """Build a compact tag for output dirs without repeating long experiment names."""
-    checkpoint_name = os.path.basename(os.path.normpath(hf_checkpoint))
-    iter_match = re.search(r"(iter_\d+)", checkpoint_name)
-    if iter_match:
-        suffix = "_converted" if checkpoint_name.endswith("_converted") else ""
-        return f"{iter_match.group(1)}{suffix}"
-    if len(checkpoint_name) <= max_len:
-        return checkpoint_name
-    return checkpoint_name[:max_len].rstrip("_-.")
-
-
-def load_tasks(data_path: str) -> list[dict]:
-    """Load tasks from parquet file. Returns list of dicts with task_id, prompt, metadata."""
-    df = pd.read_parquet(data_path)
-    tasks = []
-    for i, row in df.iterrows():
-        meta = row["metadata"]
-        prompt_msgs = row["prompt"]
-        prompt_text = prompt_msgs[0]["content"] if isinstance(prompt_msgs, list) else prompt_msgs
-        tasks.append({
-            "index": i,
-            "task_id": meta["task_id"],
-            "start_url": meta.get("start_url", ""),
-            "prompt": prompt_text,
-            "metadata": meta,
-        })
-    return tasks
-
-
 def load_tasks_from_jsonl(task_file: str) -> list[dict]:
     """Load tasks from a browser-env style JSONL task file."""
     tasks = []
@@ -190,7 +133,7 @@ def load_tasks_from_jsonl(task_file: str) -> list[dict]:
     return tasks
 
 
-async def evaluate_single_task(args: EvalArgs, task: dict, sampling_params: dict, turn_level: bool) -> dict:
+async def evaluate_single_task(args: EvalArgs, task: dict) -> dict:
     """Run generation + judge reward for a single task. Returns a result dict."""
     async def _evaluate_single_task_impl() -> dict:
         task_id = task["task_id"]
@@ -204,16 +147,11 @@ async def evaluate_single_task(args: EvalArgs, task: dict, sampling_params: dict
             },
         )
 
-        if turn_level:
-            print(f"Evaluating task {task_id} with turn-level evaluation...")
-            turn_samples = await generate_turn_sample(args, input_sample, sampling_params)
-            reward = await reward_func(args, turn_samples)
-            result = turn_samples[-1]
-            reward = reward[-1] if isinstance(reward, list) and reward else reward
-        else:
-            print(f"Evaluating task {task_id} with task-level evaluation...")
-            result = await generate_trajectory_sample(args, input_sample, sampling_params)
-            reward = await reward_func(args, result)
+        print(f"Evaluating task {task_id} with turn-level evaluation...")
+        turn_samples = await generate_turn_sample(args, input_sample, None)
+        reward = await reward_func(args, turn_samples)
+        result = turn_samples[-1]
+        reward = reward[-1] if isinstance(reward, list) and reward else reward
 
         return {
             "task_id": task_id,
@@ -229,21 +167,17 @@ async def evaluate_single_task(args: EvalArgs, task: dict, sampling_params: dict
         }
 
     task_id = task["task_id"]
-    task_timeout_secs = getattr(args, "task_timeout_secs", None)
-    if task_timeout_secs is not None and task_timeout_secs > 0:
-        try:
-            return await asyncio.wait_for(_evaluate_single_task_impl(), timeout=task_timeout_secs)
-        except asyncio.TimeoutError as exc:
-            raise TimeoutError(f"Task {task_id} timed out after {task_timeout_secs}s") from exc
-    return await _evaluate_single_task_impl()
+    task_timeout_secs = args.task_timeout_secs
+    try:
+        return await asyncio.wait_for(_evaluate_single_task_impl(), timeout=task_timeout_secs)
+    except asyncio.TimeoutError as exc:
+        raise TimeoutError(f"Task {task_id} timed out after {task_timeout_secs}s") from exc
 
 
 async def evaluate_all(
     args: EvalArgs,
     tasks: list[dict],
     n_parallel: int,
-    sampling_params: dict,
-    turn_level: bool,
     output_path: str = "",
 ) -> tuple[list[dict], list[dict]]:
     """Evaluate all tasks with bounded parallelism using a semaphore."""
@@ -255,7 +189,7 @@ async def evaluate_all(
         async with sem:
             print(f"[START] {task['task_id']}")
             try:
-                result = await evaluate_single_task(args, task, sampling_params, turn_level)
+                result = await evaluate_single_task(args, task)
             except asyncio.CancelledError:
                 abnormal = _build_abnormal_result(task, "cancelled")
                 print(f"[ABNORMAL] {task['task_id']} -> cancelled")
@@ -394,31 +328,12 @@ def get_summary(results: list[dict], abnormal_results: list[dict]) -> str:
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate browser agent success rate")
-    parser.add_argument("--data", type=str, default="openwebrl/data/webvoyager_val.parquet",
-                        help="Path to validation parquet file")
-    parser.add_argument("--task-file", type=str, default="",
-                        help="Optional path to browser-env style JSONL task file. If set, overrides --data.")
+    parser.add_argument("--task-file", type=str, required=True,
+                        help="Path to browser-env style JSONL task file.")
     parser.add_argument("--n-parallel", type=int, default=8,
                         help="Max number of concurrent browser environments")
-    parser.add_argument("--sglang-ip", type=str, default="localhost")
-    parser.add_argument("--sglang-port", type=int, default=30000)
     parser.add_argument("--hf-checkpoint", type=str, default=os.environ.get("MODEL_PATH") or os.environ.get("HF_CHECKPOINT", ""))
     parser.add_argument("--max-steps", type=int, default=16)
-    parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--top-p", type=float, default=1.0)
-    parser.add_argument("--top-k", type=int, default=-1)
-    parser.add_argument("--repetition-penalty", type=float, default=1.0)
-    parser.add_argument("--final-answer-at-step", type=int, default=0,
-                        help="From this 1-based step on, the user turn instructs the agent to answer and terminate now (0 = off).")
-    parser.add_argument("--ineffective-hint", type=int, default=0,
-                        help="If 1: when the previous action's tool_response carried a no-effect "
-                             "note, the next user turn carries a one-line notice saying so "
-                             "(0 = off).")
-    parser.add_argument("--no-repeat-resample", type=int, default=0,
-                        help="If >0: when the sampled action repeats the previous action and that "
-                             "action's tool_response carried a no-effect note, resample up to K times "
-                             "and keep the first differing action (original kept on exhaustion). "
-                             "Requires --temperature > 0. Default 0 = fully disabled.")
     parser.add_argument("--output", type=str, default=os.environ.get("OUTPUT_ROOT", "eval_outputs/browser_eval"),
                         help="Output JSONL path (default: auto-generated with timestamp)")
     parser.add_argument("--context-num-screenshots", type=int, default=3,
@@ -426,114 +341,51 @@ def main():
     parser.add_argument("--judge-max-attached-imgs", type=int, default=3,
                         help="Maximum number of screenshots attached to the judge prompt.")
     parser.add_argument(
-        "--turn-history-reasoning-mode",
-        type=str,
-        default="full",
-        choices=["full", "hide_thinking", "action_only"],
-        help="Turn-level history compression mode for historical assistant reasoning.",
-    )
-    parser.add_argument(
         "--browser-response-format-mode",
         type=str,
-        default="slime",
-        choices=["slime", "browser_env"],
-        help="Browser response format mode used by both generate and reward.",
-    )
-    parser.add_argument(
-        "--browser-include-tool-response",
-        type=int,
-        default=1,
-        choices=[0, 1],
-        help="Whether to include environment feedback as <tool_response> in the next rollout input.",
+        default="browser_env",
+        choices=["browser_env"],
+        help="Browser response format mode used by reward.",
     )
     parser.add_argument("--judge-model", type=str, default="gpt-4.1")
     parser.add_argument(
         "--judge-api-mode",
         type=str,
-        default="token",
-        choices=["token", "api_key", "served"],
-        help="Judge client mode. 'served' uses JUDGE_API_BASE or JUDGE_API_HOST/JUDGE_API_PORT.",
-    )
-    parser.add_argument(
-        "--judge-prompt-variant",
-        type=str,
-        default="default",
-        choices=["default", "action_history"],
-        help="Judge prompt variant. 'action_history' adds parsed action history and inferred image step indices.",
+        default="served",
+        choices=["served"],
+        help="Judge client mode. 'served' uses JUDGE_API_BASE.",
     )
     parser.add_argument("--judge-timeout-secs", type=float, default=30.0,
-                        help="Timeout in seconds for a single judge API call. <=0 disables the timeout.")
+                        help="Timeout in seconds for a single judge API call.")
     parser.add_argument("--task-indices", type=str, default="",
                         help="Comma-separated task indices to evaluate (e.g. '0,5,10'). Empty = all.")
-    parser.add_argument("--turn-level", action="store_true", help="Whether to run turn-level evaluation instead of task-level.")
-    parser.add_argument("--no-save-eval-samples", action="store_true", help="Disable saving eval_samples trajectories (screenshots + turn data) to disk.")
-    parser.add_argument("--inference-step-timeout-secs", type=float, default=120.0,
-                        help="Timeout in seconds for a single SGLang /generate request. <=0 disables the timeout.")
+    parser.add_argument("--turn-level", action="store_true", required=True,
+                        help="Run turn-level evaluation (the only supported mode).")
     parser.add_argument("--task-timeout-secs", type=float, default=600.0,
-                        help="Timeout in seconds for a whole task evaluation. <=0 disables the timeout.")
+                        help="Timeout in seconds for a whole task evaluation.")
     args = parser.parse_args()
-    if args.no_repeat_resample > 0 and args.temperature <= 0.0:
-        parser.error("--no-repeat-resample requires --temperature > 0: at temperature 0 a "
-                     "resample regenerates the identical tokens and the guard is a silent no-op.")
 
-    checkpoint_tag = _short_checkpoint_tag(args.hf_checkpoint)
+    checkpoint_tag = os.path.basename(os.path.normpath(args.hf_checkpoint))
     judge_tag = os.path.basename(os.path.normpath(args.judge_model))
-    expt_name = f"eval_{checkpoint_tag}_{judge_tag}_{'turn' if args.turn_level else 'trajectory'}_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
+    expt_name = f"eval_{checkpoint_tag}_{judge_tag}_turn_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}"
     args.output = os.path.join(args.output, expt_name)
     os.makedirs(args.output, exist_ok=True)
 
     # Build eval args
     eval_args = EvalArgs(
-        sglang_router_ip=args.sglang_ip,
-        sglang_router_port=args.sglang_port,
-        hf_checkpoint=args.hf_checkpoint,
         max_steps=args.max_steps,
         context_num_screenshots=args.context_num_screenshots,
         judge_max_attached_imgs=args.judge_max_attached_imgs,
         judge_api_model=args.judge_model,
-        judge_api_mode=args.judge_api_mode,
-        judge_prompt_variant=args.judge_prompt_variant,
-        turn_history_reasoning_mode=args.turn_history_reasoning_mode,
         browser_response_format_mode=args.browser_response_format_mode,
-        browser_include_tool_response=args.browser_include_tool_response,
         judge_timeout_secs=args.judge_timeout_secs,
-        path_to_save_generated_samples="" if args.no_save_eval_samples else os.path.join(args.output, 'eval_samples'),
-        inference_step_timeout_secs=args.inference_step_timeout_secs,
+        path_to_save_generated_samples=os.path.join(args.output, 'eval_samples'),
         task_timeout_secs=args.task_timeout_secs,
-        no_repeat_resample=args.no_repeat_resample,
-        final_answer_at_step=args.final_answer_at_step,
-        ineffective_hint=args.ineffective_hint,
     )
 
-    init_http_client(eval_args)
-
-    sampling_params = {
-        "temperature": args.temperature,
-        "top_p": args.top_p,
-        "top_k": args.top_k,
-        "repetition_penalty": args.repetition_penalty,
-        # Kept at 4096 deliberately. The Gemini CUA corpus emits the terminal
-        # turn's answer in both <think> and done()'s argument (see
-        # ablations/same_model_family/build_openai_messages.py for why splitting
-        # them apart was rejected), which makes that turn ~2x longer -- but the
-        # largest terminal turn across the 383-episode Phase A corpus is 3,874
-        # tokens, and 0/383 exceed 4096. Raising this was considered and rejected:
-        # every published baseline (incl. the 37.5%/26.9% frozen-projector repro)
-        # was measured at 4096, so changing it would add an uncontrolled variable
-        # to the very comparison the Same Model Family ablation exists to make.
-        # If a Gemini-corpus student later shows truncation (watch for a rise in
-        # terminate_reason=format_error_failed), raise it AND re-run the baseline
-        # at the same value rather than changing it on one side.
-        "max_new_tokens": 4096,
-    }
-
     # Load tasks
-    if args.task_file:
-        tasks = load_tasks_from_jsonl(args.task_file)
-        print(f"Loaded {len(tasks)} tasks from {args.task_file}")
-    else:
-        tasks = load_tasks(args.data)
-        print(f"Loaded {len(tasks)} tasks from {args.data}")
+    tasks = load_tasks_from_jsonl(args.task_file)
+    print(f"Loaded {len(tasks)} tasks from {args.task_file}")
 
     # Filter tasks if specified
     if args.task_indices:
@@ -543,7 +395,7 @@ def main():
 
     # Run evaluation
     results, abnormal_results = asyncio.run(
-        evaluate_all(eval_args, tasks, args.n_parallel, sampling_params, args.turn_level, args.output)
+        evaluate_all(eval_args, tasks, args.n_parallel, args.output)
     )
 
     summary = get_summary(results, abnormal_results)

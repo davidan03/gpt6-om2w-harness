@@ -18,11 +18,9 @@ Endpoints:
 import argparse
 import asyncio
 import base64
-import json
 import logging
 import os
 import resource
-import sys
 import time
 import traceback
 from typing import Any, Dict, List, Optional
@@ -30,14 +28,6 @@ from typing import Any, Dict, List, Optional
 import uvicorn
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
-
-# ---------------------------------------------------------------------------
-# Path setup
-# ---------------------------------------------------------------------------
-_BROWSER_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-_PROJECT_ROOT = os.path.abspath(os.path.join(_BROWSER_DIR, "..", ".."))
-if _PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, _PROJECT_ROOT)
 
 from openwebrl.env.web_env import WebEnv
 
@@ -53,12 +43,11 @@ logger = logging.getLogger("env_server")
 # ---------------------------------------------------------------------------
 _env: Optional[WebEnv] = None
 _lock = asyncio.Lock()
-# Backstop for the step hang guard (see openwebrl/env/web_env.py): with the
-# guard on, a /step that still exceeds this returns a 500 instead of hanging
-# until the client's 300 s request timeout.
-_STEP_HANG_GUARD = os.environ.get("SLIME_BROWSER_STEP_HANG_GUARD", "0") == "1"
+# Backstop for the step hang guard (see openwebrl/env/web_env.py): a /step that
+# still exceeds this returns a 500 instead of hanging until the client's 300 s
+# request timeout.
 _STEP_HANG_GUARD_SECS = float(os.environ.get("SLIME_BROWSER_HANG_GUARD_STEP_SECS", "200"))
-logger.warning("env_server step hang guard: %s (step=%.0fs)", "ON" if _STEP_HANG_GUARD else "OFF", _STEP_HANG_GUARD_SECS)
+logger.warning("env_server step hang guard: ON (step=%.0fs)", _STEP_HANG_GUARD_SECS)
 _task_id: Optional[str] = None
 _task_data: Optional[dict] = None
 _last_used_at: Optional[float] = None
@@ -158,16 +147,8 @@ async def reset_env(request: ResetRequest):
                 wait_timeout=config["wait_timeout"],
                 screenshot_timeout=config.get("screenshot_timeout"),
                 start_url=task_data["start_url"],
-                resize_output_coords=config["resize_output_coords"],
-                resize_scale=config["resize_scale"],
-                image_patch_size=config["image_patch_size"],
                 tool_list=request.tool_list,
                 policy=request.policy,
-                # Opt-in cloud browser backend; see WebEnv's own docstring/comments.
-                # Credentials resolve from BROWSERBASE_API_KEY/BROWSERBASE_PROJECT_ID
-                # env vars (inherited from this subprocess's parent), not sent over
-                # this request, so they never need to round-trip through env_config.
-                browser_backend=config.get("browser_backend", "local"),
             )
             await env.setup()
             observation, info = await env.reset()
@@ -208,9 +189,7 @@ async def step_env(request: StepRequest):
 
     async with _lock:
         try:
-            _step = _env.step(request.actions)
-            if _STEP_HANG_GUARD:
-                _step = asyncio.wait_for(_step, timeout=_STEP_HANG_GUARD_SECS)
+            _step = asyncio.wait_for(_env.step(request.actions), timeout=_STEP_HANG_GUARD_SECS)
             observation, reward, terminated, truncated, info = await _step
         
         except Exception as exc:
@@ -295,11 +274,6 @@ def main():
         "--log-level",
         default=os.environ.get("BROWSER_ENV_SERVER_LOG_LEVEL", "warning"),
     )
-    parser.add_argument(
-        "--access-log",
-        action=argparse.BooleanOptionalAction,
-        default=os.environ.get("BROWSER_ENV_SERVER_ACCESS_LOG", "0").strip().lower() in {"1", "true", "yes", "on"},
-    )
     args = parser.parse_args()
 
     uvicorn.run(
@@ -307,7 +281,7 @@ def main():
         host=args.host,
         port=args.port,
         log_level=args.log_level,
-        access_log=args.access_log,
+        access_log=False,
     )
 
 

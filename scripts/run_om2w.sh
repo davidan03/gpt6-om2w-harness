@@ -3,7 +3,6 @@
 # Usage: scripts/run_om2w.sh OUTPUT_DIR [extra run_evaluate.py args, e.g. --task-indices 0,1,2]
 set -euo pipefail
 : "${OPENAI_API_KEY:?set OPENAI_API_KEY (agent and GPT-4.1 judge)}"
-: "${OPENWEBRL_UPSTREAM:?set OPENWEBRL_UPSTREAM to an OpenWebRL clone at commit 05f8ed4 (provides slime)}"
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 OUT=$(mkdir -p "${1:?usage: run_om2w.sh OUTPUT_DIR [args]}" && cd "$1" && pwd); shift
 [ -z "$(ls -A "$OUT")" ] || { echo "OUTPUT_DIR must be empty: finished tasks are skipped by filename" >&2; exit 1; }
@@ -13,8 +12,7 @@ RUNTIME=${RUNTIME:-${TMPDIR:-/tmp}/gpt6_om2w_$$}
 mkdir -p "$RUNTIME/profiles" "$RUNTIME/home" "$RUNTIME/ports"
 export TMPDIR=$RUNTIME/profiles BROWSER_HOME=$RUNTIME/home BROWSER_PYTHON=${PYTHON:-python}
 
-# This repo's openwebrl/ must come before the upstream clone's.
-export PYTHONPATH="$ROOT:$OPENWEBRL_UPSTREAM:${PYTHONPATH:-}" PYTHONUNBUFFERED=1
+export PYTHONPATH="$ROOT:${PYTHONPATH:-}" PYTHONUNBUFFERED=1
 export SLIME_BROWSER_LOCAL_PROCESS_PYTHON=$ROOT/scripts/browser_python.sh
 export SLIME_BROWSER_LOCAL_PROCESS_PORT_LOCK_DIR=$RUNTIME/ports
 export SLIME_BROWSER_LOCAL_PROCESS_LOG_DIR=$OUT/env_server_logs

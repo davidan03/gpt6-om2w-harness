@@ -1,15 +1,13 @@
 """Astra native computer-use rollout plugged into the existing OM2W evaluator."""
-import asyncio
 import base64
 import io
 import json
-import os
 from pathlib import Path
 
 import yaml
 from openai import AsyncOpenAI
 from PIL import Image
-from slime.utils.types import Sample
+from openwebrl.sample import Sample
 from openwebrl import run_evaluate as evaluator
 from openwebrl.generate_browser import _create_env, _apply_local_process_env_overrides, _save_sample
 
@@ -48,8 +46,7 @@ def observation_text(obs):
 
 async def generate(args, sample, sampling_params):
     cfg = yaml.safe_load((Path(__file__).parent / 'openwebrl/env/config.yaml').read_text())
-    cfg.update(mode='local_process', browser_backend='local', resize_output_coords=False,
-               width=1280, height=1000, dpr=1)
+    cfg.update(width=1280, height=1000, dpr=1)
     cfg = _apply_local_process_env_overrides(cfg)
     env = None
     turns, messages = [], []
