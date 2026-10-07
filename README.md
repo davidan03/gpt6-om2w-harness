@@ -8,7 +8,7 @@ The harness behind our GPT-6 result on the 300 Online-Mind2Web tasks: **152/300 
 
 - **Model.** `gpt-6-astra`, reasoning effort `medium` with summaries, `max_output_tokens` 8192, one action batch per response (`parallel_tool_calls=False`).
 - **Tools.** The native `computer` tool, plus strict functions: `done(response)` and OpenWebRL's `goto_url`, `go_back`, `new_tab`, `switch_tab`, `close_tab`.
-- **Executing actions.** `native_actions_v4.py` runs computer actions in Playwright inside each env server (click, double_click, type, keypress, move, scroll, drag, wait). Coordinates are not converted.
+- **Executing actions.** `native_actions.py` runs computer actions in Playwright inside each env server (click, double_click, type, keypress, move, scroll, drag, wait). Coordinates are not converted.
 - **Prompt.** The `POLICY` string, then `Task: <intent>`, then JSON with the current URL and the open tabs (URL and title).
 - **Observations.** Screenshots of the web content only (no browser chrome), 1280x1000 at DPR 1, sent at `detail: original`.
 - **History.** Kept on the server via `previous_response_id`, so the model sees every earlier screenshot.
@@ -61,7 +61,7 @@ Report successes out of 300 first. The second command gives "v2", which also dro
 Change one thing at a time, and rerun this baseline on the same day: some start pages block cluster IPs on some days.
 
 - **Model, reasoning and prompt:** `MODEL`, `POLICY`, and the `responses.create(...)` call in `astra_eval.py`.
-- **Tools:** `TOOLS` and `NAVIGATION` in `astra_eval.py`. Native action execution is in `native_actions_v4.py`.
+- **Tools:** `TOOLS` and `NAVIGATION` in `astra_eval.py`. Native action execution is in `native_actions.py`.
 - **Observations and history:** `image_url()`, `observation_text()`, and the `payload` built after each step.
 - **Harness settings:** the flags in `scripts/run_om2w.sh`.
 
@@ -70,8 +70,8 @@ Change one thing at a time, and rerun this baseline on the same day: some start 
 | path | what |
 |---|---|
 | `astra_eval.py` | agent loop |
-| `native_actions_v4.py`, `native_actions_v3.py` | native actions; v4 imports key names from v3 |
-| `openwebrl/` | OpenWebRL eval code exactly as it ran: 05f8ed4 plus our harness fixes, unused files removed |
+| `native_actions.py` | runs the `computer` actions in the env server |
+| `openwebrl/` | OpenWebRL eval code as it ran (05f8ed4 plus our harness fixes); files this harness never loads are removed |
 | `browser_runtime/` | the env server's view of `openwebrl/`; a light `__init__.py` keeps it from importing the ML stack |
 | `scripts/` | launcher, and the env-server wrapper that installs the native actions |
 | `reference/` | per-task outcomes of our run |

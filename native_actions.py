@@ -1,9 +1,21 @@
-"""Native Responses mouse/keyboard actions executed without coordinate or unit loss."""
-import asyncio
-from native_actions_v3 import KEYS, key
+"""Run OpenAI Responses `computer` actions with Playwright in the browser env server (no coordinate conversion).
 
+install() patches WebEnv so actions named "computer" go to execute(); every other tool keeps the harness path.
+"""
+import asyncio
+
+KEYS = {'CTRL': 'Control', 'CONTROL': 'Control', 'CMD': 'Meta', 'COMMAND': 'Meta',
+        'META': 'Meta', 'ALT': 'Alt', 'SHIFT': 'Shift', 'ENTER': 'Enter',
+        'RETURN': 'Enter', 'ESC': 'Escape', 'ESCAPE': 'Escape', 'SPACE': 'Space',
+        'BACKSPACE': 'Backspace', 'DELETE': 'Delete', 'TAB': 'Tab',
+        'UP': 'ArrowUp', 'DOWN': 'ArrowDown', 'LEFT': 'ArrowLeft', 'RIGHT': 'ArrowRight',
+        'HOME': 'Home', 'END': 'End', 'PAGEUP': 'PageUp', 'PAGEDOWN': 'PageDown'}
 KEYS.update(ARROWUP='ArrowUp', ARROWDOWN='ArrowDown', ARROWLEFT='ArrowLeft',
             ARROWRIGHT='ArrowRight', CAPSLOCK='CapsLock')
+
+
+def key(value):
+    return KEYS.get(value.upper(), value)
 
 
 async def execute(page, action):
